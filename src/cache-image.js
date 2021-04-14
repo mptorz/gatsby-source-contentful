@@ -1,11 +1,8 @@
 const crypto = require(`crypto`)
 const { resolve, parse } = require(`path`)
 
+const axios = require(`axios`)
 const { pathExists, createWriteStream } = require(`fs-extra`)
-
-const downloadWithRetry = require(`./download-with-retry`).default
-
-const inFlightImageCache = new Map()
 
 module.exports = async function cacheImage(store, image, options) {
   const program = store.getState().program
@@ -48,35 +45,24 @@ module.exports = async function cacheImage(store, image, options) {
   const { name, ext } = parse(fileName)
   const absolutePath = resolve(CACHE_DIR, `${name}-${optionsHash}${ext}`)
 
-  // Query the filesystem for file existence
   const alreadyExists = await pathExists(absolutePath)
-  // Whether the file exists or not, if we are downloading it then await
-  const inFlight = inFlightImageCache.get(absolutePath)
-  if (inFlight) {
-    await inFlight
-  } else if (!alreadyExists) {
-    // File doesn't exist and is not being download yet
-    const downloadPromise = new Promise((resolve, reject) => {
-      const previewUrl = `http:${url}?${params.join(`&`)}`
 
-      downloadWithRetry({
-        url: previewUrl,
-        responseType: `stream`,
-      })
-        .then(response => {
-          const file = createWriteStream(absolutePath)
-          response.data.pipe(file)
-          file.on(`finish`, resolve)
-          file.on(`error`, reject)
-        })
-        .catch(reject)
+  if (!alreadyExists) {
+    const previewUrl = `http:${url}?${params.join(`&`)}`
+
+    const response = await axios({
+      method: `get`,
+      url: previewUrl,
+      responseType: `stream`,
     })
-    inFlightImageCache.set(absolutePath, downloadPromise)
-    await downloadPromise
-    // When the file is downloaded, remove the promise from the cache
-    inFlightImageCache.delete(absolutePath)
+
+    await new Promise((resolve, reject) => {
+      const file = createWriteStream(absolutePath)
+      response.data.pipe(file)
+      file.on(`finish`, resolve)
+      file.on(`error`, reject)
+    })
   }
 
-  // Now the file should be completely downloaded
   return absolutePath
 }
